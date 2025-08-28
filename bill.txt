@@ -131,13 +131,14 @@
                     <p><strong>รายการอาหาร:</strong></p>
                     ${itemsHtml}
                     <div class="total-amount">
-                        รวมทั้งหมด: ${order.totalAmount} บาท
+                     <center>   รวมทั้งหมด: ${order.totalAmount} บาท</center>
                     </div>
                     <!-- แสดงรูปภาพจาก Base64 Data -->
                     ${order.slipBase64Data ? `<p><strong>สลิปหลักฐาน:</strong><br><img src="${order.slipBase64Data}" style="max-width: 100%; height: auto; border-radius: 8px; margin-top: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);" alt="หลักฐานการโอนเงิน"></p>` : '<p><center><strong>สลิปหลักฐาน:</strong> ไม่พบ</p>'}</center>
 <center><h2>สแกนเพื่อสะสมแต้ม</h2></center>
-<img src="QR.png" alt="waffle with fruits" width="322" height="215">
- <p style="font-size:0.9em; color:#888; text-align: center; margin-top: 20px;"></center>
+<center><img src="QR.png" alt="waffle with fruits" width="150" height="150"></center>
+ <center><p style="font-size:0.9em; color:#888; text-align: center; margin-top: 20px;"></center>
+
                  
              <p style="font-size:0.9em; color:#888; text-align: center; margin-top: 20px;">
                         ขอบคุณที่ใช้บริการ!
@@ -153,4 +154,5 @@
         });
     </script>
 </body>
+
 </html>
