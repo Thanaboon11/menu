@@ -1,0 +1,1860 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NP อาหารแช่แข็ง</title>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap" rel="stylesheet">
+    <!-- Firebase SDKs -->
+    <script type="module">
+        // Import Firebase modules ที่จำเป็น
+        function generateRandomOrderId() {
+            return Math.floor(100000 + Math.random() * 900000); // สร้างตัวเลข 6 หลักแบบสุ่ม
+        }
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+        import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js";
+        // ไม่ต้อง import Firebase Storage ถ้าไม่ได้ใช้
+        // import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-storage.js";
+
+        let app;
+        let db;
+        let auth;
+        
+        let currentAppId; // ประกาศตัวแปรนี้ใน scope ที่เข้าถึงได้ทั่วถึง
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            // === START: Firebase Config and Initialization ===
+            const firebaseConfig = {
+                // *** สำคัญมาก: โปรดเปลี่ยน apiKey ตรงนี้ด้วยค่าใหม่ที่คุณได้จาก Firebase Console ***
+                apiKey: "AIzaSyAzAJPE2sOsLr7zW1NJxP8SSBO0hBJuSJo",
+                authDomain: "food-order-b419e.firebaseapp.com",
+                projectId: "food-order-b419e",
+                storageBucket: "food-order-b419e.firebasestorage.app",
+                messagingSenderId: "785024452468",
+                appId: "1:785024452468:web:6c159e4bea1f74367c4e21",
+                measurementId: "G-YVP5NPYG08"
+            };
+
+            currentAppId = typeof __app_id !== 'undefined' ? __app_id : firebaseConfig.projectId;
+            const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+            const providedFirebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : firebaseConfig;
+
+            try {
+                app = initializeApp(providedFirebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+         
+                console.log("Firebase app initialized successfully.");
+                console.log("Current App ID (from index.html):", currentAppId);
+
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                    console.log("Firebase authenticated successfully. User ID:", auth.currentUser.uid);
+                } catch (error) {
+                    console.error("Firebase authentication error:", error);
+                }
+
+                window.firebaseApp = app;
+                window.firestoreDb = db;
+                window.firebaseAuth = auth;
+             
+                window.currentAppId = currentAppId;
+
+            } catch (error) {
+                console.error("Error initializing Firebase app:", error);
+                console.error("ระบบยังไม่พร้อมใช้งาน (Firebase Init Error) กรุณาตรวจสอบการตั้งค่า Firebase");
+                return;
+            }
+            // === END: Firebase Config and Initialization ===
+
+            // --- Start of existing DOM manipulation and form submission logic ---
+
+            const menuItems = document.querySelectorAll('.menu-item');
+            const summaryItemsDiv = document.getElementById('summary-items');
+            const totalAmountSpan = document.getElementById('total-amount');
+            const messageBox = document.getElementById('messageBox');
+            const submitButton = document.querySelector('.submit-button');
+            const loadingIndicator = document.createElement('div');
+            loadingIndicator.textContent = 'กำลังบันทึกข้อมูล...';
+            loadingIndicator.style.cssText = `
+                display: none;
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                background-color: rgba(0, 0, 0, 0.7);
+                color: white;
+                padding: 20px;
+                border-radius: 10px;
+                z-index: 9999;
+                font-size: 1.2em;
+            `;
+            document.body.appendChild(loadingIndicator);
+
+            // Payment method elements
+            const paymentMethodRadios = document.querySelectorAll('input[name="paymentMethod"]');
+            const transferDetailsSection = document.getElementById('transfer-details-section');
+            const slipUploadInput = document.getElementById('slip-upload');
+            const qrCodeDisplay = document.getElementById('qr-code-display'); // Get the new QR code display div
+
+            // Category filter elements
+            const mainCategoryButtons = document.querySelectorAll('.main-category-buttons .category-button');
+            const subCategoryContainer = document.getElementById('sub-category-container');
+            const subCategoryGroups = document.querySelectorAll('.sub-category-group');
+            const menuCategories = document.querySelectorAll('.menu-category');
+
+            let currentMainCategory = 'all'; // Keep track of the currently selected main category
+
+            // Sidebar elements
+            const hamburgerMenu = document.getElementById('hamburger-menu');
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.getElementById('overlay');
+
+
+            function showMessage(message, type = 'success', extraContent = '') { // เพิ่ม parameter extraContent
+                messageBox.innerHTML = message + extraContent; // ใช้ innerHTML เพื่อรองรับ HTML ของปุ่ม
+                messageBox.className = `message-box ${type}`;
+                messageBox.style.display = 'block';
+                setTimeout(() => {
+                    messageBox.style.display = 'none';
+                }, 10000); // เพิ่มเวลาแสดงข้อความให้มีเวลาคัดลอก (10 วินาที)
+            }
+
+            function updateOrderSummary() {
+                let total = 0;
+                summaryItemsDiv.innerHTML = '';
+
+                menuItems.forEach(item => {
+                    const itemName = item.dataset.name;
+                    const itemPrice = parseFloat(item.dataset.price);
+                    const quantityInput = item.querySelector('.item-qty');
+                    const quantity = parseInt(quantityInput.value);
+
+                    if (quantity > 0) {
+                        const itemTotal = itemPrice * quantity;
+                        total += itemTotal;
+
+                        const summaryItemDiv = document.createElement('div');
+                        summaryItemDiv.classList.add('summary-item');
+                        summaryItemDiv.innerHTML = `
+                            <span>${itemName} x ${quantity}</span>
+                            <span>${itemTotal} บาท</span>
+                        `;
+                        summaryItemsDiv.appendChild(summaryItemDiv);
+                    }
+                });
+                totalAmountSpan.textContent = total;
+            }
+
+            menuItems.forEach(item => {
+                const decreaseBtn = item.querySelector('.decrease-qty');
+                const increaseBtn = item.querySelector('.increase-qty');
+                const quantityInput = item.querySelector('.item-qty');
+
+                if (decreaseBtn) {
+                    decreaseBtn.addEventListener('click', () => {
+                        let currentQty = parseInt(quantityInput.value);
+                        if (currentQty > 0) {
+                            quantityInput.value = currentQty - 1;
+                            updateOrderSummary();
+                        }
+                    });
+                }
+
+                if (increaseBtn) {
+                    increaseBtn.addEventListener('click', () => {
+                        let currentQty = parseInt(quantityInput.value);
+                        quantityInput.value = currentQty + 1;
+                        updateOrderSummary();
+                    });
+                }
+
+                if (quantityInput) {
+                    quantityInput.addEventListener('change', () => {
+                        if (parseInt(quantityInput.value) < 0 || isNaN(parseInt(quantityInput.value))) {
+                            quantityInput.value = 0;
+                        }
+                        updateOrderSummary();
+                    });
+                }
+            });
+
+            updateOrderSummary(); // Initial summary update
+
+            // Function to handle payment method display
+            function handlePaymentMethodChange() {
+                const selectedMethod = document.querySelector('input[name="paymentMethod"]:checked').value;
+                console.log("Selected payment method:", selectedMethod); // Debugging log
+
+                if (selectedMethod === 'cash') {
+                    transferDetailsSection.style.display = 'none';
+                    slipUploadInput.removeAttribute('required');
+                    qrCodeDisplay.style.display = 'none'; // Hide QR code for cash
+                } else if (selectedMethod === 'scan') {
+                    transferDetailsSection.style.display = 'block';
+                    slipUploadInput.setAttribute('required', 'required');
+                    qrCodeDisplay.style.display = 'block'; // Show QR code for scan
+                }
+                // Removed 'transfer' specific logic as it's no longer an option
+            }
+
+            // Add event listeners to payment method radios
+            paymentMethodRadios.forEach(radio => {
+                radio.addEventListener('change', handlePaymentMethodChange);
+            });
+
+            // Set initial display based on default selected radio (now 'cash' or 'scan')
+            // Ensure 'cash' is checked by default if no other is
+            const defaultCheckedRadio = document.querySelector('input[name="paymentMethod"][value="cash"]');
+            if (defaultCheckedRadio) {
+                defaultCheckedRadio.checked = true;
+            } else { // If cash is not present, default to scan
+                const scanRadio = document.querySelector('input[name="paymentMethod"][value="scan"]');
+                if (scanRadio) scanRadio.checked = true;
+            }
+            handlePaymentMethodChange(); // Call once on load to set initial state
+
+            // Function to filter menu items by main category and subcategory
+            function filterMenu(mainCategory, subCategory = 'all') {
+                menuCategories.forEach(catDiv => {
+                    const itemMainCategory = catDiv.dataset.mainCategory;
+                    const itemSubCategory = catDiv.dataset.subcategory;
+
+                    let shouldShow = false;
+
+                    if (mainCategory === 'all') {
+                        shouldShow = true; // Show all items if 'all' main category is selected
+                    } else if (itemMainCategory === mainCategory) {
+                        if (subCategory === 'all' || itemSubCategory === subCategory) {
+                            shouldShow = true; // Show if main category matches and subcategory matches or 'all' subcategory
+                        }
+                    }
+
+                    catDiv.style.display = shouldShow ? 'block' : 'none';
+                });
+            }
+
+            // Handle main category button clicks (now in sidebar)
+            mainCategoryButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    const selectedMainCategory = button.dataset.mainCategory;
+                    currentMainCategory = selectedMainCategory; // Update current main category
+
+                    // Update active style for main category buttons
+                    mainCategoryButtons.forEach(btn => btn.classList.remove('active'));
+                    button.classList.add('active');
+
+                    // Hide all sub-category groups first
+                    subCategoryGroups.forEach(group => group.style.display = 'none');
+                    subCategoryContainer.style.display = 'none'; // Hide container by default
+
+                    if (selectedMainCategory === 'all') {
+                        // Show all menu items
+                        filterMenu('all');
+                    } else {
+                        // Show the relevant sub-category group
+                        const targetSubCategoryGroup = document.querySelector(`.sub-category-group[data-parent-category="${selectedMainCategory}"]`);
+                        if (targetSubCategoryGroup) {
+                            subCategoryContainer.style.display = 'flex'; // Show container
+                            targetSubCategoryGroup.style.display = 'flex'; // Show the specific sub-category group
+                            
+                            // Activate the "all" sub-category button for the newly shown group
+                            const defaultSubButton = targetSubCategoryGroup.querySelector('.category-button[data-subcategory^="all-"]');
+                            if (defaultSubButton) {
+                                defaultSubButton.click(); // Simulate click to activate and filter
+                            } else {
+                                // If no "all" sub-category button, just filter by main category
+                                filterMenu(selectedMainCategory);
+                            }
+                        } else {
+                            // If no sub-categories for this main category, just filter by main category
+                            filterMenu(selectedMainCategory);
+                        }
+                    }
+                    // Close sidebar after selecting a main category
+                    sidebar.classList.remove('open');
+                    overlay.classList.remove('active');
+                });
+            });
+
+            // Handle sub-category button clicks
+            subCategoryGroups.forEach(group => {
+                const subButtons = group.querySelectorAll('.category-button');
+                subButtons.forEach(button => {
+                    button.addEventListener('click', () => {
+                        const selectedSubCategory = button.dataset.subcategory;
+
+                        // Update active style for sub-category buttons within the current group
+                        subButtons.forEach(btn => btn.classList.remove('active'));
+                        button.classList.add('active');
+
+                        // Filter menu items based on current main category and selected subcategory
+                        filterMenu(currentMainCategory, selectedSubCategory);
+                    });
+                });
+            });
+
+            // Sidebar toggle logic
+            hamburgerMenu.addEventListener('click', () => {
+                sidebar.classList.toggle('open');
+                overlay.classList.toggle('active');
+            });
+
+            overlay.addEventListener('click', () => {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('active');
+            });
+
+            // Show all categories by default on load
+            filterMenu('all');
+
+
+            const orderForm = document.getElementById('orderForm');
+            orderForm.addEventListener('submit', async (event) => {
+                event.preventDefault();
+
+                if (!db || !currentAppId) {
+                    console.error("Firebase Firestore is not initialized. Cannot save order.");
+                    showMessage("ระบบยังไม่พร้อมใช้งาน กรุณาลองใหม่อีกครั้ง", "error");
+                    return;
+                }
+
+                if (!auth.currentUser) {
+                    console.error("User is not authenticated. Cannot save order.");
+                    showMessage("กรุณารอสักครู่ ระบบกำลังยืนยันตัวตนผู้ใช้ หรือเกิดข้อผิดพลาดในการยืนยันตัวตน", "error");
+                    return;
+                }
+                console.log("Current authenticated user before addDoc:", auth.currentUser.uid);
+
+
+                const selectedItems = [];
+                // Only get items that are currently visible and have quantity > 0
+                menuCategories.forEach(catDiv => {
+                    if (catDiv.style.display !== 'none') { // Check if the category div is visible
+                        catDiv.querySelectorAll('.menu-item').forEach(item => {
+                            const itemName = item.dataset.name;
+                            const itemPrice = parseFloat(item.dataset.price);
+                            const quantityInput = item.querySelector('.item-qty');
+                            const quantity = parseInt(quantityInput.value);
+
+                            if (quantity > 0) {
+                                selectedItems.push({
+                                    name: itemName,
+                                    price: itemPrice,
+                                    quantity: quantity
+                                });
+                            }
+                        });
+                    }
+                });
+
+
+                if (selectedItems.length === 0) {
+                    showMessage('กรุณาเลือกรายการอาหารก่อนยืนยันการสั่งซื้อ', "error");
+                    return;
+                }
+
+                const customerName = document.getElementById('customer-name').value;
+                const customerTel = document.getElementById('customer-tel').value;
+                const customerAddress = document.getElementById('customer-address').value;
+                const customerRoom = document.getElementById('customer-room').value;
+                const customerFloor = document.getElementById('customer-floor').value;
+                const totalOrderAmount = parseFloat(totalAmountSpan.textContent);
+                const selectedPaymentMethod = document.querySelector('input[name="paymentMethod"]:checked').value;
+
+                let slipBase64Data = '';
+                const slipFile = document.getElementById('slip-upload').files[0];
+
+                if (!customerName || !customerTel || !customerAddress) {
+                    showMessage('กรุณากรอกข้อมูลผู้สั่งซื้อและที่อยู่จัดส่งให้ครบถ้วน', "error");
+                    return;
+                }
+
+                // ตรวจสอบ slipFile เฉพาะเมื่อวิธีการชำระเงินไม่ใช่เงินสด
+                if (selectedPaymentMethod === 'scan' && !slipFile) { // เปลี่ยนเงื่อนไขให้เป็นแค่ 'scan'
+                    showMessage('กรุณาแนบสลิปหลักฐานการสแกน', "error");
+                    return;
+                }
+
+                // แสดง loading indicator และปิดปุ่ม submit
+                loadingIndicator.style.display = 'block';
+                submitButton.disabled = true;
+
+                if (selectedPaymentMethod === 'scan') { // เปลี่ยนเงื่อนไขให้เป็นแค่ 'scan'
+                    try {
+                        const reader = new FileReader();
+                        reader.readAsDataURL(slipFile);
+
+                        slipBase64Data = await new Promise((resolve, reject) => {
+                            reader.onload = () => resolve(reader.result);
+                            reader.onerror = error => reject(error);
+                        });
+                        console.log("Slip converted to Base64 data.");
+
+                    } catch (e) {
+                        console.error("Error converting slip to Base64: ", e);
+                        showMessage("เกิดข้อผิดพลาดในการแปลงสลิป กรุณาลองใหม่อีกครั้ง", "error");
+                        loadingIndicator.style.display = 'none';
+                        submitButton.disabled = false;
+                        return;
+                    }
+                }
+                
+                const orderId = generateRandomOrderId();
+
+                const orderData = {
+                    customOrderId: orderId,
+                    timestamp: new Date().toLocaleString(),
+                    customer: {
+                        name: customerName,
+                        tel: customerTel,
+                        address: customerAddress,
+                        room: customerRoom,
+                        floor: customerFloor
+                    },
+                    items: selectedItems,
+                    totalAmount: totalOrderAmount,
+                    paymentMethod: selectedPaymentMethod, // บันทึกวิธีการชำระเงิน
+                    slipBase64Data: slipBase64Data // บันทึก Base64 string (อาจเป็นค่าว่างถ้าชำระเงินสด)
+                };
+
+                try {
+                    const ordersCollectionPath = `artifacts/${currentAppId}/public/data/orders`;
+                    const ordersCollectionRef = collection(db, ordersCollectionPath);
+                    console.log("Attempting to save order to path:", ordersCollectionPath);
+                    const docRef = await addDoc(ordersCollectionRef, orderData);
+                    console.log("Document written with ID: ", docRef.id);
+
+                    let copyButtonHtml = '';
+                    if (selectedPaymentMethod === 'scan') { // เปลี่ยนเงื่อนไขให้เป็นแค่ 'scan'
+                        copyButtonHtml = `
+                            <br><button id="copySlipDataBtn" style="background-color: #007bff; color: white; padding: 10px 15px; border: none; border-radius: 5px; cursor: pointer; margin-top: 10px;">คัดลอกข้อมูลสลิป</button>
+                            <p style="font-size:0.9em; color:#ddd; margin-top: 5px;">โปรดคัดลอกข้อมูลนี้แล้วส่งให้ร้านค้าผ่าน Line/Messenger/Email</p>
+                        `;
+                    }
+                    
+                    showMessage(`บันทึกคำสั่งซื้อเรียบร้อยแล้ว! เลขคำสั่งซื้อของคุณ: ${orderData.customOrderId}`, "success", copyButtonHtml);
+
+                    if (selectedPaymentMethod === 'scan') { // เปลี่ยนเงื่อนไขให้เป็นแค่ 'scan'
+                        document.getElementById('copySlipDataBtn').addEventListener('click', () => {
+                            const el = document.createElement('textarea');
+                            el.value = slipBase64Data;
+                            document.body.appendChild(el);
+                            el.select();
+                            document.execCommand('copy');
+                            document.body.removeChild(el);
+                            showMessage('คัดลอกข้อมูลสลิปเรียบร้อยแล้ว!', 'success');
+                        });
+                    }
+
+                    localStorage.setItem('lastOrder', JSON.stringify(orderData));
+
+                    // เปลี่ยนเส้นทางไปยังหน้าใบเสร็จ
+                    window.location.href = 'bill.html'; 
+
+                    // ซ่อน loading indicator และเปิดปุ่ม submit
+                    loadingIndicator.style.display = 'none';
+                    submitButton.disabled = false;
+
+                } catch (e) {
+                    console.error("Error adding document to Firestore: ", e);
+                    showMessage("เกิดข้อผิดพลาดในการบันทึกคำสั่งซื้อ กรุณาลองใหม่อีกครั้ง", "error");
+                    loadingIndicator.style.display = 'none';
+                    submitButton.disabled = false;
+                }
+            });
+        });
+    </script>
+    <style>
+        body {
+            font-family: 'Kanit', sans-serif;
+            margin: 0;
+            padding: 0; /* Remove padding from body to allow sidebar to go to edge */
+            background-color: #f4f7f6;
+            color: #333;
+        }
+        .header {
+            width: 100%;
+            padding: 15px 20px;
+            background-color: #d32f2f;
+            color: white;
+            display: flex;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1001; /* Ensure header is above other content */
+        }
+        .hamburger-menu {
+            font-size: 2em;
+            cursor: pointer;
+            margin-right: 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-around;
+            width: 30px;
+            height: 25px;
+            padding: 5px;
+        }
+        .hamburger-menu span {
+            display: block;
+            width: 100%;
+            height: 3px;
+            background-color: white;
+            border-radius: 2px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 1.5em;
+            flex-grow: 1;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            height: 100%;
+            width: 250px; /* Width of the sidebar */
+            position: fixed;
+            top: 0;
+            left: -250px; /* Initially hidden off-screen */
+            background-color: #fff;
+            padding-top: 80px; /* Space for fixed header */
+            box-shadow: 2px 0 5px rgba(0,0,0,0.2);
+            transition: left 0.3s ease;
+            z-index: 1000;
+            overflow-y: auto; /* Enable scrolling if content overflows */
+        }
+        .sidebar.open {
+            left: 0; /* Slide in */
+        }
+        .sidebar .category-buttons {
+            flex-direction: column; /* Stack buttons vertically */
+            align-items: flex-start; /* Align buttons to the left */
+            padding: 0 20px;
+            gap: 15px; /* Space between buttons */
+        }
+        .sidebar .category-button {
+            width: 100%; /* Make buttons full width in sidebar */
+            text-align: left;
+            padding: 12px 15px;
+            border: none; /* Remove default button border */
+            border-radius: 5px; /* Slightly less rounded for a more structured look */
+            background-color: #ffcdd2; /* Light red */
+            color: #b71c1c; /* Darker red */
+            font-size: 1em;
+            cursor: pointer;
+            transition: background-color 0.3s ease, color 0.3s ease;
+            white-space: nowrap; /* Prevent text wrapping */
+        }
+        .sidebar .category-button:hover {
+            background-color: #ef9a9a; /* Even darker red on hover */
+        }
+        .sidebar .category-button.active {
+            background-color: #d32f2f;
+            color: white;
+            font-weight: 600;
+        }
+
+        /* Overlay Styles */
+        .overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 999;
+            display: none; /* Hidden by default */
+        }
+        .overlay.active {
+            display: block; /* Show when sidebar is open */
+        }
+
+        /* Main content adjustment */
+        .container {
+            max-width: 900px;
+            margin: 80px auto 20px auto; /* Adjust top margin for fixed header */
+            background-color: #fff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        h1, h2 {
+            color: #d32f2f;
+            text-align: center;
+            margin-bottom: 25px;
+        }
+        .sub-categories-container {
+            margin-top: 15px;
+            margin-bottom: 30px;
+            border: 1px dashed #f8bbd0;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #ffebee;
+            display: flex; /* Ensure it's flex for sub-category buttons */
+            flex-wrap: wrap;
+            justify-content: center; /* Center sub-category buttons */
+            gap: 10px;
+        }
+        .sub-category-group {
+            display: flex; /* Use flex for sub-category buttons */
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+        }
+        /* New styles for sub-category buttons */
+        .sub-categories-container .category-button {
+            background-color: #ffffff; /* White background */
+            color: #616161; /* Dark grey text */
+            border: 1px solid #bdbbdb; /* Light grey border */
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 0.95em;
+            cursor: pointer;
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1); /* Subtle shadow */
+        }
+
+        .sub-categories-container .category-button:hover {
+            background-color: #e0e0e0; /* Lighter grey on hover */
+            border-color: #9e9e9e;
+            color: #424242;
+        }
+
+        .sub-categories-container .category-button.active {
+            background-color: #d32f2f; /* Active red */
+            color: white;
+            border-color: #d32f2f;
+            font-weight: 600;
+        }
+
+
+        .section-title {
+            background-color: #ffebee;
+            padding: 10px 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+            color: #c62828;
+            border-left: 5px solid #d32f2f;
+        }
+        /* ลบสไตล์สำหรับพื้นที่เลื่อนเมนู */
+        /* .menu-scroll-area {
+            max-height: 500px;
+            overflow-y: auto;
+            padding-right: 15px;
+        } */
+        .menu-category {
+            margin-bottom: 30px;
+        }
+        .menu-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px dashed #eee;
+        }
+        .menu-item:last-child {
+            border-bottom: none;
+        }
+        .item-info {
+            flex-grow: 1;
+        }
+        .item-name {
+            font-weight: 600;
+            font-size: 1.1em;
+        }
+        .item-price {
+            font-weight: 600;
+            color: #d32f2f;
+            white-space: nowrap;
+        }
+        .quantity-control {
+            display: flex;
+            align-items: center;
+            margin-left: 20px;
+        }
+        .quantity-control button {
+            background-color: #d32f2f;
+            color: white;
+            border: none;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            font-size: 1.2em;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background-color 0.2s ease;
+        }
+        .quantity-control button:hover {
+            background-color: #c62828;
+        }
+        .quantity-control input {
+            width: 40px;
+            text-align: center;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin: 0 5px;
+            height: 30px;
+            font-size: 1em;
+            -moz-appearance: textfield; /* Firefox */
+        }
+        .quantity-control input::-webkit-outer-spin-button,
+        .quantity-control input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .order-summary {
+            background-color: #e8f5e9;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 40px;
+            border: 1px solid #c8e6c9;
+        }
+        .order-summary h3 {
+            color: #2e7d32;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .summary-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+            border-bottom: 1px dashed #cfe9d0;
+        }
+        .summary-item:last-child {
+            border-bottom: none;
+        }
+        .total-price {
+            font-size: 1.4em;
+            font-weight: 700;
+            color: #1b5e20;
+            margin-top: 15px;
+            text-align: right;
+        }
+
+        .customer-info {
+            margin-top: 40px;
+            padding: 20px;
+            background-color: #e3f2fd;
+            border-radius: 8px;
+            border: 1px solid #bbdefb;
+        }
+        .customer-info h3 {
+            color: #1565c0;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .customer-info label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2196f3;
+        }
+        .customer-info input[type="text"],
+        .customer-info input[type="tel"],
+        .customer-info textarea {
+            width: calc(100% - 20px);
+            padding: 10px;
+            margin-bottom: 15px;
+            border: 1px solid #90caf9;
+            border-radius: 5px;
+            font-size: 1em;
+        }
+        .customer-info textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+
+        .payment-section {
+            margin-top: 40px;
+            padding: 20px;
+            background-color: #fce4ec;
+            border-radius: 8px;
+            border: 1px solid #f8bbd0;
+        }
+        .payment-section h3 {
+            color: #ad1457;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .payment-options {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .payment-option {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+        }
+        .payment-option input[type="radio"] {
+            margin-right: 8px;
+            transform: scale(1.2);
+        }
+        .payment-option label {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: #333;
+        }
+        .transfer-details-section { /* New style for the collapsible section */
+            border: 1px dashed #f48fb1;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            background-color: #fff;
+        }
+        .payment-details {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 1.1em;
+            line-height: 1.6;
+        }
+        .payment-details strong {
+            color: #880e4f;
+        }
+        .qr-code-display { /* New style for QR code image */
+            text-align: center;
+            margin-top: 20px;
+            margin-bottom: 20px;
+        }
+        .qr-code-display img {
+            max-width: 180px;
+            height: auto;
+            border: 1px solid #eee;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        .upload-slip {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 20px;
+        }
+        .upload-slip input[type="file"] {
+            margin-bottom: 15px;
+            border: 1px solid #f48fb1;
+            padding: 8px;
+            border-radius: 5px;
+            width: 80%;
+            max-width: 300px;
+            background-color: #fff;
+        }
+        .submit-button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.3em;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            display: block;
+            width: 100%;
+            max-width: 300px;
+            margin: 20px auto 0;
+        }
+        .submit-button:hover {
+            background-color: #45a049;
+        }
+        .footer {
+            text-align: center;
+            margin-top: 50px;
+            font-size: 0.9em;
+            color: #777;
+        }
+        /* Message Box Styles */
+        .message-box {
+            display: none;
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 15px 25px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            font-weight: 600;
+            color: white;
+            z-index: 1000;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        .message-box.success {
+            background-color: #4CAF50; /* Green */
+        }
+        .message-box.error {
+            background-color: #f44336; /* Red */
+        }
+    </style>
+</head>
+<body>
+    <!-- Header with Hamburger Menu -->
+    <div class="header">
+        <div class="hamburger-menu" id="hamburger-menu">
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+        <h1>NP อาหารแช่แข็ง</h1>
+    </div>
+
+    <!-- Sidebar Menu -->
+    <nav class="sidebar" id="sidebar">
+        <div class="category-buttons main-category-buttons">
+            <button type="button" class="category-button active" data-main-category="all">ทั้งหมด</button>
+            <button type="button" class="category-button" data-main-category="set-mookata">เซตหมูกระทะ</button>
+            <button type="button" class="category-button" data-main-category="pork">หมู</button>
+            <button type="button" class="category-button" data-main-category="beef">เนื้อ</button>
+            <button type="button" class="category-button" data-main-category="seafood">ทะเล</button>
+            <button type="button" class="category-button" data-main-category="processed-food">อาหารแปรรูป</button>
+        </div>
+    </nav>
+
+    <!-- Overlay -->
+    <div class="overlay" id="overlay"></div>
+
+    <div class="container">
+        <h2>รายการอาหาร</h2>
+
+        <!-- Sub Category Buttons Container -->
+        <div id="sub-category-container" class="sub-categories-container" style="display: none;">
+            <!-- Sub-category buttons will be shown/hidden by JS -->
+
+            <div class="sub-category-group" data-parent-category="set-mookata" style="display: none;">
+                <button type="button" class="category-button active" data-subcategory="all-set-mookata">เซตหมูกระทะทั้งหมด</button>
+                <!-- No specific sub-categories for sets, so just 'all' -->
+            </div>
+
+            <div class="sub-category-group" data-parent-category="pork" style="display: none;">
+                <button type="button" class="category-button active" data-subcategory="all-pork">หมูทั้งหมด</button>
+                <button type="button" class="category-button" data-subcategory="pork-sliced">หมูสไลด์ & สามชั้น</button>
+                <button type="button" class="category-button" data-subcategory="pork-marinated">หมูหมัก</button>
+                <button type="button" class="category-button" data-subcategory="pork-offal">ตับ</button>
+                <button type="button" class="category-button" data-subcategory="pork-minced">หมูบด</button>
+                <button type="button" class="category-button" data-subcategory="bacon">เบคอนหมู</button>
+            </div>
+
+            <div class="sub-category-group" data-parent-category="beef" style="display: none;">
+                <button type="button" class="category-button active" data-subcategory="all-beef">เนื้อทั้งหมด</button>
+                <button type="button" class="category-button" data-subcategory="beef-sliced">เนื้อสไลด์</button>
+                <button type="button" class="category-button" data-subcategory="beef-offal">น่องลาย</button>
+                <button type="button" class="category-button" data-subcategory="beef-bacon">เบคอนเนื้อ</button>
+                <button type="button" class="category-button" data-subcategory="beef-tongue">ลิ้นสไลด์</button>
+            </div>
+
+            <div class="sub-category-group" data-parent-category="seafood" style="display: none;">
+                <button type="button" class="category-button active" data-subcategory="all-seafood">ทะเลทั้งหมด</button>
+                <button type="button" class="category-button" data-subcategory="seafood-squid">หมึก</button>
+                <button type="button" class="category-button" data-subcategory="seafood-shrimp">กุ้ง</button>
+                <button type="button" class="category-button" data-subcategory="seafood-fish">ปลา</button>
+                <button type="button" class="category-button" data-subcategory="seafood-mussel">หอยแมลงภู่</button>
+            </div>
+
+            <div class="sub-category-group" data-parent-category="processed-food" style="display: none;">
+                <button type="button" class="category-button active" data-subcategory="all-processed">อาหารแปรรูปทั้งหมด</button>
+                <button type="button" class="category-button" data-subcategory="processed-mini">มินิ</button>
+                <button type="button" class="category-button" data-subcategory="processed-cheese">ชีส</button>
+                <button type="button" class="category-button" data-subcategory="processed-fish-balls">ลูกชิ้น</button>
+                <button type="button" class="category-button" data-subcategory="processed-other">อื่นๆ</button>
+            </div>
+        </div>
+
+        <form id="orderForm">
+            <!-- ลบ div สำหรับเลื่อนเมนู .menu-scroll-area -->
+            <!-- เซตหมูกระทะ -->
+            <div class="menu-category" data-main-category="set-mookata" data-subcategory="all-set-mookata">
+                <div class="section-title">เซตหมูกระทะ</div>
+
+                <div class="menu-item" data-price="159" data-name="เซตหมูกระทะโบราณ">
+                    <div class="item-info">
+                        <div class="item-name">เซตหมูกระทะโบราณ</div>
+                    </div>
+                    <div class="item-price">159 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="b.jpg" alt="รูปภาพเซตหมูกระทะโบราณ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="10" data-name="วุ้นเส้น (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">วุ้นเส้น (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">10 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="c.jpg" alt="รูปภาพวุ้นเส้น" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="20" data-name="หมูนุ่ม (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">หมูนุ่ม (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">20 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="f.png" alt="รูปภาพหมูนุ่ม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="30" data-name="หมูสามชั้น (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">หมูสามชั้น (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">30 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="h.jpg" alt="รูปภาพหมูสามชั้น" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                 <div class="menu-item" data-price="10" data-name="มาม่า (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">มาม่า (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">10 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="i.jpg" alt="รูปภาพมาม่า" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="20" data-name="ตับ (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">ตับ (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">20 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="e.png" alt="รูปภาพตับ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="10" data-name="ไข่ (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">ไข่ (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">10 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="g.jpg" alt="รูปภาพไข่" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="25" data-name="ชุดผัก (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">ชุดผัก (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">25 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="j.jpg" alt="รูปภาพชุดผัก" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="35" data-name="น้ำจิ้ม (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">น้ำจิ้ม (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">35 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Sauce" alt="รูปภาพน้ำจิ้ม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="10" data-name="เต้าหู้ไข่ (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">เต้าหู้ไข่ (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">10 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="a.jpg" alt="รูปภาพเต้าหู้ไข่" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="15" data-name="เห็ดเข็มทอง (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">เห็ดเข็มทอง (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">15 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="d.jpg" alt="รูปภาพเห็ดเข็มทอง" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+
+                <div class="menu-item" data-price="170" data-name="เซตสันคอเฉยๆ">
+                    <div class="item-info">
+                        <div class="item-name">เซตสันคอเฉยๆ</div>
+                        <div class="item-description"></div>
+                    </div>
+                    <div class="item-price">170 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                         <img src="https://placehold.co/80x80/E0F2F7/000000?text=Pork+Neck" alt="รูปภาพเซตสันคอ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                 <div class="menu-item" data-price="10" data-name="สันคอกัปตัน (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">สันคอกัปตัน (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">10 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                         <img src="https://placehold.co/80x80/E0F2F7/000000?text=Capt+Pork+Neck" alt="รูปภาพสันคอกัปตัน" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="10" data-name="สันคอพรีเมียม (พิเศษ)">
+                    <div class="item-info">
+                        <div class="item-name">สันคอพรีเมียม (พิเศษ)</div>
+                    </div>
+                    <div class="item-price">10 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Premium+Pork+Neck" alt="รูปภาพสันคอพรีเมียม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="179" data-name="เซตสามชั้นเฉยๆ">
+                    <div class="item-info">
+                        <div class="item-name">เซตสามชั้นเฉยๆ</div>
+                        <div class="item-description">สามชั้น 3 แถว, สามชั้นกลม รอบหนัง, สามชั้นชาบู (เลือก 1 อย่าง)</div>
+                    </div>
+                    <div class="item-price">179 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Belly+Set" alt="รูปภาพเซตสามชั้น" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- หมู -->
+            <div class="menu-category" data-main-category="pork" data-subcategory="pork-sliced">
+                <div class="section-title">หมูสไลด์ & สามชั้น</div>
+                <div class="menu-item" data-price="149" data-name="สามชั้นสไลด์ 500 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">สามชั้นสไลด์ 500 กรัม</div>
+                    </div>
+                    <div class="item-price">149 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                         <img src="https://placehold.co/80x80/E0F2F7/000000?text=Sliced+Belly" alt="รูปภาพสามชั้นสไลด์" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="149" data-name="สามชั้นกลม 500 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">สามชั้นกลม 500 กรัม</div>
+                    </div>
+                    <div class="item-price">149 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Round+Belly" alt="รูปภาพสามชั้นกลม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="149" data-name="สามชั้น 3 แถว 500 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">สามชั้น 3 แถว 500 กรัม</div>
+                    </div>
+                    <div class="item-price">149 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=3-Layer+Belly" alt="รูปภาพสามชั้น 3 แถว" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="245" data-name="สันคอพรีเมียม 1 กิโลกรัม">
+                    <div class="item-info">
+                        <div class="item-name">สันคอพรีเมียม 1 กิโลกรัม</div>
+                    </div>
+                    <div class="item-price">245 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Premium+Pork+Neck" alt="รูปภาพสันคอพรีเมียม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="145" data-name="สันคอกัปตัน 500 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">สันคอกัปตัน 500 กรัม</div>
+                    </div>
+                    <div class="item-price">145 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Capt+Pork+Neck" alt="รูปภาพสันคอกัปตัน" style="width:80x;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="pork" data-subcategory="pork-marinated">
+                <div class="section-title">หมูหมัก</div>
+                <div class="menu-item" data-price="105" data-name="หมูหมักนุ่ม 1 กิโลกรัม">
+                    <div class="item-info">
+                        <div class="item-name">หมูหมักนุ่ม 1 กิโลกรัม</div>
+                    </div>
+                    <div class="item-price">105 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Marinated+Soft" alt="รูปภาพหมูหมักนุ่ม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="105" data-name="หมูหมักงา 1 กิโลกรัม">
+                    <div class="item-info">
+                        <div class="item-name">หมูหมักงา 1 กิโลกรัม</div>
+                    </div>
+                    <div class="item-price">105 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Marinated+Sesame" alt="รูปภาพหมูหมักงา" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="105" data-name="หมูหมักพริกไทยดำ 1 กิโลกรัม">
+                    <div class="item-info">
+                        <div class="item-name">หมูหมักพริกไทยดำ 1 กิโลกรัม</div>
+                    </div>
+                    <div class="item-price">105 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Marinated+Pepper" alt="รูปภาพหมูหมักพริกไทยดำ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="189" data-name="สามชั้นหมักนุ่ม 1 กิโลกรัม">
+                    <div class="item-info">
+                        <div class="item-name">สามชั้นหมักนุ่ม 1 กิโลกรัม</div>
+                    </div>
+                    <div class="item-price">189 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Marinated+Belly" alt="รูปภาพสามชั้นหมักนุ่ม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="119" data-name="หมูหมักนุ่ม MPork">
+                    <div class="item-info">
+                        <div class="item-name">หมูหมักนุ่ม MPork</div>
+                    </div>
+                    <div class="item-price">119 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=MPork+Soft" alt="รูปภาพหมูหมักนุ่ม MPork" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="119" data-name="หมูหมักงา MPork">
+                    <div class="item-info">
+                        <div class="item-name">หมูหมักงา MPork</div>
+                    </div>
+                    <div class="item-price">119 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=MPork+Sesame" alt="รูปภาพหมูหมักงา MPork" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="119" data-name="หมูหมักพริกไทยดำ MPork">
+                    <div class="item-info">
+                        <div class="item-name">หมูหมักพริกไทยดำ MPork</div>
+                    </div>
+                    <div class="item-price">119 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=MPork+Pepper" alt="รูปภาพหมูหมักพริกไทยดำ MPork" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="pork" data-subcategory="pork-offal">
+                <div class="section-title">ตับ</div>
+                <div class="menu-item" data-price="125" data-name="ตับ 1 กิโลกรัม">
+                    <div class="item-info">
+                        <div class="item-name">ตับ 1 กิโลกรัม</div>
+                    </div>
+                    <div class="item-price">125 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Liver" alt="รูปภาพตับ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="pork" data-subcategory="pork-minced">
+                <div class="section-title">หมูบด</div>
+                <div class="menu-item" data-price="100" data-name="หมูบด 1 กิโลกรัม">
+                    <div class="item-info">
+                        <div class="item-name">หมูบด 1 กิโลกรัม</div>
+                    </div>
+                    <div class="item-price">100 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Minced+Pork" alt="รูปภาพหมูบด" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="pork" data-subcategory="bacon">
+                <div class="section-title">เบคอนหมู</div>
+                <div class="menu-item" data-price="139" data-name="เบคอน 500 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">เบคอน 500 กรัม</div>
+                    </div>
+                    <div class="item-price">139 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Pork+Bacon" alt="รูปภาพเบคอนหมู" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- เนื้อ -->
+            <div class="menu-category" data-main-category="beef" data-subcategory="beef-sliced">
+                <div class="section-title">เนื้อสไลด์</div>
+                <div class="menu-item" data-price="209" data-name="เสือร้องไห้ออสเตเลีย 500 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">เสือร้องไห้ออสเตเลีย 500 กรัม</div>
+                    </div>
+                    <div class="item-price">209 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Australian+Beef" alt="รูปภาพเสือร้องไห้ออสเตเลีย" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="99" data-name="เสือออส 200 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">เสือออส 200 กรัม</div>
+                    </div>
+                    <div class="item-price">99 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Australian+Beef" alt="รูปภาพเสือออส" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="99" data-name="ลิ้นสไลด์ 200 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">ลิ้นสไลด์ 200 กรัม</div>
+                    </div>
+                    <div class="item-price">99 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Sliced+Tongue" alt="รูปภาพลิ้นสไลด์" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="beef" data-subcategory="beef-offal">
+                <div class="section-title">น่องลาย</div>
+                <div class="menu-item" data-price="99" data-name="น่องลาย 200 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">น่องลาย 200 กรัม</div>
+                    </div>
+                    <div class="item-price">99 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Beef+Shin" alt="รูปภาพน่องลาย" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="beef" data-subcategory="beef-bacon">
+                <div class="section-title">เบคอนเนื้อ</div>
+                <div class="menu-item" data-price="99" data-name="เบคอนเนื้อ 200 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">เบคอนเนื้อ 200 กรัม</div>
+                    </div>
+                    <div class="item-price">99 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Beef+Bacon" alt="รูปภาพเบคอนเนื้อ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- ทะเล -->
+            <div class="menu-category" data-main-category="seafood" data-subcategory="seafood-squid">
+                <div class="section-title">หมึก</div>
+                <div class="menu-item" data-price="60" data-name="หมึกกรอบ 500 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">หมึกกรอบ 500 กรัม</div>
+                    </div>
+                    <div class="item-price">60 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Crispy+Squid" alt="รูปภาพหมึกกรอบ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="100" data-name="ปลาหมึกบั้ง">
+                    <div class="item-info">
+                        <div class="item-name">ปลาหมึกบั้ง</div>
+                    </div>
+                    <div class="item-price">100 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Scored+Squid" alt="รูปภาพปลาหมึกบั้ง" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="100" data-name="ปลาหมึกวง">
+                    <div class="item-info">
+                        <div class="item-name">ปลาหมึกวง</div>
+                    </div>
+                    <div class="item-price">100 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Squid+Rings" alt="รูปภาพปลาหมึกวง" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="seafood" data-subcategory="seafood-shrimp">
+                <div class="section-title">กุ้ง</div>
+                <div class="menu-item" data-price="159" data-name="กุ้งเด้ง 40-50 ตัว">
+                    <div class="item-info">
+                        <div class="item-name">กุ้งเด้ง 40-50 ตัว</div>
+                    </div>
+                    <div class="item-price">159 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Bouncy+Shrimp" alt="รูปภาพกุ้งเด้ง" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="25" data-name="มินิกุ้งแม็กนั่ม">
+                    <div class="item-info">
+                        <div class="item-name">มินิกุ้งแม็กนั่ม</div>
+                    </div>
+                    <div class="item-price">25 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Mini+Shrimp" alt="รูปภาพมินิกุ้งแม็กนั่ม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="75" data-name="กุ้งแม็กนั่ม">
+                    <div class="item-info">
+                        <div class="item-name">กุ้งแม็กนั่ม</div>
+                    </div>
+                    <div class="item-price">75 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Magnum+Shrimp" alt="รูปภาพกุ้งแม็กนั่ม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="seafood" data-subcategory="seafood-fish">
+                <div class="section-title">ปลา</div>
+                <div class="menu-item" data-price="95" data-name="ปลาดอลลี่หั่น">
+                    <div class="item-info">
+                        <div class="item-name">ปลาดอลลี่หั่น</div>
+                    </div>
+                    <div class="item-price">95 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Dolly+Fish" alt="รูปภาพปลาดอลลี่หั่น" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="45" data-name="ลูกชิ้นปลานามิ">
+                    <div class="item-info">
+                        <div class="item-name">ลูกชิ้นปลานามิ</div>
+                    </div>
+                    <div class="item-price">45 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Nami+Fishball" alt="รูปภาพลูกชิ้นปลานามิ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="seafood" data-subcategory="seafood-mussel">
+                <div class="section-title">หอยแมลงภู่</div>
+                <div class="menu-item" data-price="129" data-name="หอยแมลงภู่แกะ">
+                    <div class="item-info">
+                        <div class="item-name">หอยแมลงภู่แกะ</div>
+                    </div>
+                    <div class="item-price">129 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Peeled+Mussel" alt="รูปภาพหอยแมลงภู่แกะ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="139" data-name="หอยแมลงภู่ติดฝา">
+                    <div class="item-info">
+                        <div class="item-name">หอยแมลงภู่ติดฝา</div>
+                    </div>
+                    <div class="item-price">139 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Mussel+Shell" alt="รูปภาพหอยแมลงภู่ติดฝา" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- อาหารแปรรูป -->
+            <div class="menu-category" data-main-category="processed-food" data-subcategory="processed-mini">
+                <div class="section-title">มินิ</div>
+                <div class="menu-item" data-price="25" data-name="มินิเปาทูโทนใส่ไข่กุ้ง">
+                    <div class="item-info">
+                        <div class="item-name">มินิเปาทูโทนใส่ไข่กุ้ง</div>
+                    </div>
+                    <div class="item-price">25 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Mini+Two-Tone+Bun" alt="รูปภาพมินิเปาทูโทนใส่ไข่กุ้ง" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="25" data-name="มินิฟองเต้าหู้ชีส">
+                    <div class="item-info">
+                        <div class="item-name">มินิฟองเต้าหู้ชีส</div>
+                    </div>
+                    <div class="item-price">25 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Mini+Cheese+Tofu+Skin" alt="รูปภาพมินิฟองเต้าหู้ชีส" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="20" data-name="มินิชิกูว่า">
+                    <div class="item-info">
+                        <div class="item-name">มินิชิกูว่า</div>
+                    </div>
+                    <div class="item-price">20 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Mini+Chikuwa" alt="รูปภาพมินิชิกูว่า" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="25" data-name="มินิกุ้งแม็กนั่ม">
+                    <div class="item-info">
+                        <div class="item-name">มินิกุ้งแม็กนั่ม</div>
+                    </div>
+                    <div class="item-price">25 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Mini+Magnum+Shrimp" alt="รูปภาพมินิกุ้งแม็กนั่ม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="processed-food" data-subcategory="processed-cheese">
+                <div class="section-title">ชีส</div>
+                <div class="menu-item" data-price="95" data-name="เต้าหู้ชีส 500 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">เต้าหู้ชีส 500 กรัม</div>
+                    </div>
+                    <div class="item-price">95 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Cheese+Tofu" alt="รูปภาพเต้าหู้ชีส" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="85" data-name="ปูอัดไส้ชีส">
+                    <div class="item-info">
+                        <div class="item-name">ปูอัดไส้ชีส</div>
+                    </div>
+                    <div class="item-price">85 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Cheese+Crabstick" alt="รูปภาพปูอัดไส้ชีส" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="99" data-name="ฟองเต้าหู้ชีส">
+                    <div class="item-info">
+                        <div class="item-name">ฟองเต้าหู้ชีส</div>
+                    </div>
+                    <div class="item-price">99 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Cheese+Tofu+Skin" alt="รูปภาพฟองเต้าหู้ชีส" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="processed-food" data-subcategory="processed-fish-balls">
+                <div class="section-title">ลูกชิ้น</div>
+                <div class="menu-item" data-price="55" data-name="ลูกชิ้นหมูป้าปิ๋">
+                    <div class="item-info">
+                        <div class="item-name">ลูกชิ้นหมูป้าปิ๋</div>
+                    </div>
+                    <div class="item-price">55 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Pa+Pi+Porkball" alt="รูปภาพลูกชิ้นหมูป้าปิ๋" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="55" data-name="ลูกชิ้นเนื้อป้าปิ๋">
+                    <div class="item-info">
+                        <div class="item-name">ลูกชิ้นเนื้อป้าปิ๋</div>
+                    </div>
+                    <div class="item-price">55 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Pa+Pi+Beefball" alt="รูปภาพลูกชิ้นเนื้อป้าปิ๋" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+            <div class="menu-category" data-main-category="processed-food" data-subcategory="processed-other">
+                <div class="section-title">อื่นๆ</div>
+                <div class="menu-item" data-price="99" data-name="ปลาม้วนไข่เค็ม 500 กรัม">
+                    <div class="item-info">
+                        <div class="item-name">ปลาม้วนไข่เค็ม 500 กรัม</div>
+                    </div>
+                    <div class="item-price">99 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Salted+Egg+Fish+Roll" alt="รูปภาพปลาม้วนไข่เค็ม" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="99" data-name="คอมโบฟิตบัน">
+                    <div class="item-info">
+                        <div class="item-name">คอมโบฟิตบัน</div>
+                    </div>
+                    <div class="item-price">99 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Combo+Fitbun" alt="รูปภาพคอมโบฟิตบัน" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="85" data-name="เต้าหู้ปลา">
+                    <div class="item-info">
+                        <div class="item-name">เต้าหู้ปลา</div>
+                    </div>
+                    <div class="item-price">85 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Fish+Tofu" alt="รูปภาพเต้าหู้ปลา" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="90" data-name="ซูซูฟิตบัน">
+                    <div class="item-info">
+                        <div class="item-name">ซูซูฟิตบัน</div>
+                    </div>
+                    <div class="item-price">90 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Susu+Fitbun" alt="รูปภาพซูซูฟิตบัน" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="95" data-name="ทูโทนชิชะโมะ">
+                    <div class="item-info">
+                        <div class="item-name">ทูโทนชิชะโมะ</div>
+                    </div>
+                    <div class="item-price">95 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Two-Tone+Shishamo" alt="รูปภาพทูโทนชิชะโมะ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="89" data-name="ปูอัดเบนโตะ">
+                    <div class="item-info">
+                        <div class="item-name">ปูอัดเบนโตะ</div>
+                    </div>
+                    <div class="item-price">89 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Bento+Crabstick" alt="รูปภาพปูอัดเบนโตะ" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="95" data-name="เปาทูโทนไส้ไข่กุ้ง">
+                    <div class="item-info">
+                        <div class="item-name">เปาทูโทนไส้ไข่กุ้ง</div>
+                    </div>
+                    <div class="item-price">95 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Two-Tone+Bun+Shrimp+Roe" alt="รูปภาพเปาทูโทนไส้ไข่กุ้ง" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+                <div class="menu-item" data-price="65" data-name="ไข่หวาน">
+                    <div class="item-info">
+                        <div class="item-name">ไข่หวาน</div>
+                    </div>
+                    <div class="item-price">65 บาท</div>
+                    <div class="quantity-control">
+                        <button type="button" class="decrease-qty">-</button>
+                        <input type="number" value="0" min="0" class="item-qty">
+                        <button type="button" class="increase-qty">+</button>
+                        <img src="https://placehold.co/80x80/E0F2F7/000000?text=Sweet+Egg" alt="รูปภาพไข่หวาน" style="width:80px;height:80px; margin-left: 10px; border-radius: 5px;">
+                    </div>
+                </div>
+            </div>
+
+
+            <div class="order-summary">
+                <h3>สรุปรายการสั่งซื้อ</h3>
+                <div id="summary-items">
+                    <!-- Summary items will be dynamically added here -->
+                </div>
+                <div class="total-price">
+                    รวมทั้งหมด: <span id="total-amount">0</span> บาท
+                </div>
+            </div>
+
+            <div class="customer-info">
+                <h3>ข้อมูลผู้สั่งซื้อและจัดส่ง</h3>
+                <label for="customer-name">ชื่อ-นามสกุล:</label>
+                <input type="text" id="customer-name" name="customerName" required placeholder="เช่น สมชาย ใจดี">
+
+                <label for="customer-tel">เบอร์โทรศัพท์:</label>
+                <input type="tel" id="customer-tel" name="customerTel" required placeholder="เช่น 08XXXXXXXX" pattern="[0-9]{10}">
+
+                <label for="customer-address">ที่อยู่จัดส่ง:</label>
+                <textarea id="customer-address" name="customerAddress" rows="3" required placeholder="เช่น 123/4 หมู่บ้านสุขสันต์ ถนนประชาชื่น ซอย 5"></textarea>
+
+                <label for="customer-room">ห้อง/เลขที่ (ถ้ามี):</label>
+                <input type="text" id="customer-room" name="customerRoom" placeholder="เช่น 101, ห้อง A5">
+
+                <label for="customer-floor">ชั้น (ถ้ามี):</label>
+                <input type="text" id="customer-floor" name="customerFloor" placeholder="เช่น 3, G">
+            </div>
+
+            <div class="payment-section">
+                <h3>วิธีการชำระเงิน</h3>
+                <div class="payment-options">
+                    <div class="payment-option">
+                        <input type="radio" id="pay-cash" name="paymentMethod" value="cash" checked>
+                        <label for="pay-cash">เงินสด</label>
+                    </div>
+                    <!-- ลบตัวเลือก "โอนเงิน" ออก -->
+                    <!--
+                    <div class="payment-option">
+                        <input type="radio" id="pay-transfer" name="paymentMethod" value="transfer" checked>
+                        <label for="pay-transfer">โอนเงิน</label>
+                    </div>
+                    -->
+                    <div class="payment-option">
+                        <input type="radio" id="pay-scan" name="paymentMethod" value="scan">
+                        <label for="pay-scan">สแกน QR Code</label>
+                    </div>
+                </div>
+
+                <div id="transfer-details-section" class="transfer-details-section" style="display: none;"> <!-- ตั้งค่า display: none เป็น default เพราะเงินสดไม่แสดง -->
+                    <div class="payment-details">
+                        <p>โอนเงินผ่านบัญชีธนาคาร:</p>
+                        <p>ธนาคาร: <strong>XXX Bank</strong></p>
+                        <p>ชื่อบัญชี: <strong>ชื่อร้านหมูกระทะ</strong></p>
+                        <p>เลขที่บัญชี: <strong>123-4-56789-0</strong></p>
+                        <p>โปรดแนบสลิปหลังจากการโอนเงิน</p>
+                    </div>
+                    <div id="qr-code-display" class="qr-code-display" style="display: none;">
+                        <p>สแกน QR Code เพื่อชำระเงิน:</p>
+                        <img src="scan.png" alt="QR Code สำหรับชำระเงิน">
+                        <p style="font-size:0.9em; color:#777;">(รูปภาพ QR Code ตัวอย่าง)</p>
+                    </div>
+                    <div class="upload-slip">
+                        <label for="slip-upload">แนบสลิปหลักฐานการโอนเงิน/สแกน:</label>
+                        <input type="file" id="slip-upload" accept="image/*" required>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="submit-button">ยืนยันการสั่งซื้อ</button>
+        </form>
+
+        <div class="footer">
+            <p>&copy; 2025 ร้านหมูกระทะ. All rights reserved.</p>
+        </div>
+    </div>
+    <div id="messageBox" class="message-box"></div>
+</body>
+</html>
