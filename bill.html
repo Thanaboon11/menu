@@ -130,7 +130,7 @@
                     ${order.customer.floor ? `<p><strong>ชั้น:</strong> ${order.customer.floor}</p>` : ''}
                     <p><strong>รายการอาหาร:</strong></p>
                     ${itemsHtml}
-                    <div class="total-amount">
+                   <div class="total-amount">
                      <center>   รวมทั้งหมด: ${order.totalAmount} บาท</center>
                     </div>
                     <!-- แสดงรูปภาพจาก Base64 Data -->
@@ -138,6 +138,7 @@
 <center><h2>สแกนเพื่อสะสมแต้ม</h2></center>
 <center><img src="QR.png" alt="waffle with fruits" width="150" height="150"></center>
  <center><p style="font-size:0.9em; color:#888; text-align: center; margin-top: 20px;"></center>
+
                  
              <p style="font-size:0.9em; color:#888; text-align: center; margin-top: 20px;">
                         ขอบคุณที่ใช้บริการ!
@@ -153,4 +154,5 @@
         });
     </script>
 </body>
+
 </html>
